@@ -180,9 +180,3 @@ class SchedulerService:
                 self._wait_with_interrupt_check(60)
         
         logger.info("Scheduler daemon stopped")
-    
-    def run_once(self):
-        """Run sync once and exit"""
-        logger.info("Running single sync operation...")
-        success = self._perform_sync()
-        return 0 if success else 1
