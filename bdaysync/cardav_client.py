@@ -2,7 +2,6 @@
 CardDAV client for fetching contacts with birthdays
 """
 
-import re
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -168,9 +167,7 @@ class CardDAVClient:
             propfind_body = '''<?xml version="1.0" encoding="utf-8" ?>
             <D:propfind xmlns:D="DAV:">
                 <D:prop>
-                    <D:getetag />
                     <D:getcontenttype />
-                    <D:resourcetype />
                 </D:prop>
             </D:propfind>'''
             
@@ -228,38 +225,24 @@ class CardDAVClient:
     
     def _extract_vcard_urls(self, xml_response: str) -> List[str]:
         """Extract vCard URLs from PROPFIND response"""
+        dav_namespace = 'DAV:'
+
+        try:
+            root = ElementTree.fromstring(xml_response)
+        except ElementTree.ParseError as error:
+            logger.warning(f"Could not parse vCard discovery XML: {error}")
+            return []
+
         urls = []
-        
-        # Find all href elements containing .vcf files
-        vcf_pattern = r'<d:href[^>]*>([^<]*\.vcf)</d:href>'
-        vcf_matches = re.findall(vcf_pattern, xml_response, re.IGNORECASE)
-        
-        for url in vcf_matches:
-            url = url.strip()
-            if url:
-                urls.append(url)
-                logger.debug(f"Found vCard URL: {url}")
-        
-        # Also try a more general pattern for any vcard content type
-        href_pattern = r'<d:href[^>]*>([^<]+)</d:href>'
-        content_type_pattern = r'<d:getcontenttype[^>]*>([^<]*vcard[^<]*)</d:getcontenttype>'
-        
-        href_matches = re.findall(href_pattern, xml_response, re.IGNORECASE)
-        content_matches = re.findall(content_type_pattern, xml_response, re.IGNORECASE)
-        
-        # If we found content type matches, try to match them with hrefs
-        if content_matches and not urls:
-            for href in href_matches:
-                href = href.strip()
-                if not href.endswith('/') and not href.endswith('.vcf'):
-                    # Check if this href appears near a vcard content type
-                    href_index = xml_response.find(f'<d:href>{href}</d:href>')
-                    if href_index > 0:
-                        # Look for vcard content type within 500 chars after href
-                        nearby_text = xml_response[href_index:href_index + 500]
-                        if 'vcard' in nearby_text.lower():
-                            urls.append(href)
-                            logger.debug(f"Found vCard URL by content type: {href}")
+        for response in root.findall(f'{{{dav_namespace}}}response'):
+            href = response.findtext(f'{{{dav_namespace}}}href')
+            content_type = response.findtext(
+                f'{{{dav_namespace}}}propstat/{{{dav_namespace}}}prop/'
+                f'{{{dav_namespace}}}getcontenttype'
+            )
+            if href and content_type and 'vcard' in content_type.lower():
+                urls.append(href.strip())
+                logger.debug(f"Found vCard URL: {href.strip()}")
         
         logger.info(f"Extracted {len(urls)} vCard URLs")
         return urls
