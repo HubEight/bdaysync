@@ -59,7 +59,8 @@ class SchedulerService:
         """Check if we should sync based on cron schedule"""
         try:
             return croniter(schedule, last_check).get_next(datetime) <= now
-        except:
+        except Exception as e:
+            logger.error(f"Invalid cron schedule '{schedule}': {e}")
             return False
     
     def _perform_sync(self, diagnostic=False):
@@ -104,7 +105,8 @@ class SchedulerService:
                 'sync_schedule': self.sync_schedule,
                 'diagnostic_schedule': self.diagnostic_schedule
             }
-        except:
+        except Exception as e:
+            logger.error(f"Could not calculate the next scheduled run: {e}")
             return None
     
     def run_daemon(self):
