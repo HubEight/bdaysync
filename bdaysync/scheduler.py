@@ -27,6 +27,7 @@ class SchedulerService:
         self.startup_delay = config['startup_delay']
         
         self.last_sync = None
+        self.last_schedule_check = datetime.now()
         
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -54,12 +55,10 @@ class SchedulerService:
             return True
         return datetime.now() - self.last_sync >= timedelta(hours=self.sync_interval_hours)
     
-    def _should_sync_cron(self, schedule):
+    def _should_sync_cron(self, schedule, last_check, now):
         """Check if we should sync based on cron schedule"""
         try:
-            cron = croniter(schedule, datetime.now() - timedelta(minutes=1))
-            next_time = cron.get_next(datetime)
-            return next_time <= datetime.now()
+            return croniter(schedule, last_check).get_next(datetime) <= now
         except:
             return False
     
@@ -141,6 +140,7 @@ class SchedulerService:
         while self.running:
             try:
                 loop_count += 1
+                now = datetime.now()
                 
                 # Check if it's time for a sync
                 sync_needed = False
@@ -149,9 +149,14 @@ class SchedulerService:
                 if self.sync_interval_hours > 0:
                     sync_needed = self._should_sync_interval()
                 else:
-                    sync_needed = self._should_sync_cron(self.sync_schedule)
+                    sync_needed = self._should_sync_cron(
+                        self.sync_schedule, self.last_schedule_check, now
+                    )
                 
-                diagnostic_needed = self._should_sync_cron(self.diagnostic_schedule)
+                diagnostic_needed = self._should_sync_cron(
+                    self.diagnostic_schedule, self.last_schedule_check, now
+                )
+                self.last_schedule_check = now
                 
                 if diagnostic_needed:
                     self._perform_sync(diagnostic=True)
