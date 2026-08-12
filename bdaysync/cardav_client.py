@@ -76,12 +76,7 @@ class CardDAVClient:
             self.addressbook_urls = self._extract_addressbooks(response.text)
             
             if not self.addressbook_urls:
-                # If no addressbooks found, maybe this URL IS an addressbook
-                if self._is_addressbook(response.text):
-                    logger.info("Provided URL appears to be a single addressbook")
-                    self.addressbook_urls = [self.server_url]
-                else:
-                    raise Exception("No addressbooks found at the provided URL")
+                raise Exception("No addressbooks found at the provided URL")
             
             logger.info(f"Discovered {len(self.addressbook_urls)} addressbooks:")
             for ab_url in self.addressbook_urls:
@@ -97,10 +92,6 @@ class CardDAVClient:
     def _extract_addressbooks(self, xml_response: str) -> List[str]:
         """Extract addressbook collection URLs from PROPFIND response"""
         return self._find_addressbooks(xml_response)
-
-    def _is_addressbook(self, xml_response: str) -> bool:
-        """Check if the response indicates this URL is an addressbook collection"""
-        return bool(self._find_addressbooks(xml_response))
 
     def _find_addressbooks(self, xml_response: str) -> List[str]:
         """Find CardDAV addressbook collections in a DAV multistatus response."""
