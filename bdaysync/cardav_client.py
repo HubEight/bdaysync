@@ -3,6 +3,7 @@ CardDAV client for fetching contacts with birthdays
 """
 
 import logging
+import time
 from datetime import datetime
 from typing import List, Dict, Optional
 from xml.etree import ElementTree
@@ -144,6 +145,19 @@ class CardDAVClient:
         logger.info(f"Total contacts with birthdays across all addressbooks: {len(all_contacts)}")
         return all_contacts
     
+    def _http_get_retry(self, url: str, attempts: int = 3):
+        """GET with retries for transient connection errors (e.g. IPv6 unreachable)."""
+        last_error = None
+        for i in range(1, attempts + 1):
+            try:
+                return requests.get(url, auth=self.auth, timeout=10)
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                logger.warning(f"GET failed ({i}/{attempts}) for {url}: {e}")
+                if i < attempts:
+                    time.sleep(i)
+        raise last_error
+
     def _get_contacts_from_addressbook(self, addressbook_url: str) -> List[Dict]:
         """Fetch contacts from a specific addressbook"""
         contacts = []
@@ -185,7 +199,7 @@ class CardDAVClient:
                         full_url = self._resolve_url(vcard_url)
                         logger.debug(f"Fetching vCard {i+1}/{len(vcard_urls)} from: {full_url}")
                         
-                        vcard_response = requests.get(full_url, auth=self.auth, timeout=10)
+                        vcard_response = self._http_get_retry(full_url)
                         logger.debug(f"vCard response status: {vcard_response.status_code}")
                         
                         if vcard_response.status_code == 200:
