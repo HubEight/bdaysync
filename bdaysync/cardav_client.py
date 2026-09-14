@@ -226,14 +226,18 @@ class CardDAVClient:
 
         urls = []
         for response in root.findall(f'{{{dav_namespace}}}response'):
-            href = response.findtext(f'{{{dav_namespace}}}href')
-            content_type = response.findtext(
+            href = (response.findtext(f'{{{dav_namespace}}}href') or '').strip()
+            if not href or href.endswith('/'):
+                continue
+            content_type = (response.findtext(
                 f'{{{dav_namespace}}}propstat/{{{dav_namespace}}}prop/'
                 f'{{{dav_namespace}}}getcontenttype'
-            )
-            if href and content_type and 'vcard' in content_type.lower():
-                urls.append(href.strip())
-                logger.debug(f"Found vCard URL: {href.strip()}")
+            ) or '')
+            # SOGo/sabre set getcontenttype to a vcard MIME type. iCloud omits
+            # that property and uses *.vcf hrefs instead.
+            if 'vcard' in content_type.lower() or href.lower().endswith('.vcf'):
+                urls.append(href)
+                logger.debug(f"Found vCard URL: {href}")
         
         logger.info(f"Extracted {len(urls)} vCard URLs")
         return urls
