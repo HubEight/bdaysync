@@ -29,6 +29,9 @@ class CardDAVClient:
         
         # Discover addressbooks
         self.addressbook_urls = []
+        self.vcard_listed = 0
+        self.vcard_fetched_ok = 0
+        self.fetch_complete = False
         self._test_auth_and_discover()
     
     def _test_auth_and_discover(self):
@@ -135,6 +138,9 @@ class CardDAVClient:
     def get_contacts(self) -> List[Dict]:
         """Fetch all contacts from all discovered addressbooks"""
         all_contacts = []
+        self.vcard_listed = 0
+        self.vcard_fetched_ok = 0
+        self.fetch_complete = False
         
         for addressbook_url in self.addressbook_urls:
             logger.info(f"Processing addressbook: {addressbook_url}")
@@ -142,6 +148,13 @@ class CardDAVClient:
             all_contacts.extend(contacts)
             logger.info(f"Found {len(contacts)} contacts with birthdays in this addressbook")
         
+        self.fetch_complete = (
+            self.vcard_listed > 0 and self.vcard_fetched_ok == self.vcard_listed
+        )
+        logger.info(
+            f"CardDAV fetch {self.vcard_fetched_ok}/{self.vcard_listed} vCards "
+            f"(complete={self.fetch_complete})"
+        )
         logger.info(f"Total contacts with birthdays across all addressbooks: {len(all_contacts)}")
         return all_contacts
     
@@ -192,6 +205,8 @@ class CardDAVClient:
                 if not vcard_urls:
                     logger.debug("No vCard URLs found in this addressbook")
                     return contacts
+
+                self.vcard_listed += len(vcard_urls)
                 
                 # Fetch each vCard
                 for i, vcard_url in enumerate(vcard_urls):
@@ -203,6 +218,7 @@ class CardDAVClient:
                         logger.debug(f"vCard response status: {vcard_response.status_code}")
                         
                         if vcard_response.status_code == 200:
+                            self.vcard_fetched_ok += 1
                             logger.debug(f"vCard content preview: {vcard_response.text[:200]}...")
                             contact = self._parse_vcard(vcard_response.text)
                             if contact:

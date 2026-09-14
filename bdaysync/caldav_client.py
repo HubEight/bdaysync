@@ -3,10 +3,13 @@ CalDAV client for creating birthday events
 """
 
 import logging
+import re
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 import vobject
 import caldav
+
+BIRTHDAY_UID_RE = re.compile(r'^birthday-(.+)-(\d{8})$')
 from config import get_birthday_config
 
 logger = logging.getLogger(__name__)
@@ -164,6 +167,35 @@ class CalDAVClient:
             else:
                 return f"{name}'s birthday is in {days_before} days!"
     
+    def delete_orphans(self, contacts: List[Dict]) -> int:
+        """Delete birthday-* events whose name slug is not in the current BDAY set."""
+        wanted = {contact['name'].replace(' ', '-').lower() for contact in contacts}
+        events = self.calendar.events()
+        if not events:
+            logger.warning("No calendar events listed; skipping orphan delete")
+            return 0
+
+        deleted = 0
+        for ev in events:
+            try:
+                parsed = vobject.readOne(ev.data)
+                if not hasattr(parsed, 'vevent') or not hasattr(parsed.vevent, 'uid'):
+                    continue
+                uid = parsed.vevent.uid.value
+                match = BIRTHDAY_UID_RE.match(uid)
+                if not match:
+                    continue
+                slug = match.group(1)
+                if slug in wanted:
+                    continue
+                logger.info(f"Deleting orphan birthday event: {uid}")
+                ev.delete()
+                deleted += 1
+            except Exception as e:
+                logger.warning(f"Error while considering event for orphan delete: {e}")
+                continue
+        return deleted
+
     def _find_existing_event(self, name: str, date) -> Optional:
         """Find existing birthday event for a contact"""
         try:
