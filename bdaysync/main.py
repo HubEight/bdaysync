@@ -98,27 +98,30 @@ def main_sync():
         
         if not contacts:
             logger.warning("No contacts with birthdays found")
-        else:
-            logger.info(f"Found {len(contacts)} contacts with birthdays")
-            created_count = 0
-            current_year = datetime.now().year
-            for contact in contacts:
-                logger.info(f"Processing birthday for: {contact['name']} ({contact['birthday']})")
-                if caldav_client.create_birthday_event(contact, current_year):
-                    created_count += 1
-                if caldav_client.create_birthday_event(contact, current_year + 1):
-                    created_count += 1
-            logger.info(f"Successfully created {created_count} birthday events")
+            return False
+        
+        logger.info(f"Found {len(contacts)} contacts with birthdays")
+        
+        # Create birthday events
+        created_count = 0
+        current_year = datetime.now().year
+        
+        for contact in contacts:
+            logger.info(f"Processing birthday for: {contact['name']} ({contact['birthday']})")
+            if caldav_client.create_birthday_event(contact, current_year):
+                created_count += 1
+            
+            # Also create for next year
+            if caldav_client.create_birthday_event(contact, current_year + 1):
+                created_count += 1
+        
+        logger.info(f"Successfully created {created_count} birthday events")
 
         if cardav_client.fetch_complete:
             deleted = caldav_client.delete_orphans(contacts)
             logger.info(f"Deleted {deleted} orphan birthday events")
         else:
-            logger.warning(
-                f"Incomplete CardDAV fetch "
-                f"({cardav_client.vcard_fetched_ok}/{cardav_client.vcard_listed}); "
-                f"skipping orphan delete"
-            )
+            logger.warning("Incomplete CardDAV fetch; skipping orphan delete")
 
         return True
         
