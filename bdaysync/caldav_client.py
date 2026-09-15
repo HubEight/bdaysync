@@ -8,11 +8,16 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import vobject
 import caldav
-
-BIRTHDAY_UID_RE = re.compile(r'^birthday-(.+)-(\d{8})$')
 from config import get_birthday_config
 
 logger = logging.getLogger(__name__)
+
+BIRTHDAY_UID_RE = re.compile(r'^birthday-(.+)-\d{4}(\d{4})$')
+
+
+def birthday_slug(name: str) -> str:
+    """Name part of a birthday event UID: birthday-{slug}-{YYYYMMDD}"""
+    return name.replace(' ', '-').lower()
 
 class CalDAVClient:
     """Client for creating events in CalDAV server"""
@@ -93,7 +98,7 @@ class CalDAVClient:
                     return False
             
             # Create unique UID
-            event_uid = f"birthday-{name.replace(' ', '-').lower()}-{event_date.strftime('%Y%m%d')}"
+            event_uid = f"birthday-{birthday_slug(name)}-{event_date.strftime('%Y%m%d')}"
             
             # Create iCalendar event
             cal = vobject.iCalendar()
@@ -168,15 +173,11 @@ class CalDAVClient:
                 return f"{name}'s birthday is in {days_before} days!"
     
     def delete_orphans(self, contacts: List[Dict]) -> int:
-        """Delete birthday-* events whose name slug is not in the current BDAY set."""
-        wanted = {contact['name'].replace(' ', '-').lower() for contact in contacts}
-        events = self.calendar.events()
-        if not events:
-            logger.warning("No calendar events listed; skipping orphan delete")
-            return 0
+        """Delete birthday-* events whose name and month/day match no current contact."""
+        wanted = {(birthday_slug(c['name']), c['birthday'].strftime('%m%d')) for c in contacts}
 
         deleted = 0
-        for ev in events:
+        for ev in self.calendar.events():
             try:
                 parsed = vobject.readOne(ev.data)
                 if not hasattr(parsed, 'vevent') or not hasattr(parsed.vevent, 'uid'):
@@ -185,8 +186,7 @@ class CalDAVClient:
                 match = BIRTHDAY_UID_RE.match(uid)
                 if not match:
                     continue
-                slug = match.group(1)
-                if slug in wanted:
+                if match.groups() in wanted:
                     continue
                 logger.info(f"Deleting orphan birthday event: {uid}")
                 ev.delete()
@@ -229,7 +229,7 @@ class CalDAVClient:
                         # Also check by UID pattern
                         if hasattr(cal.vevent, 'uid'):
                             uid = cal.vevent.uid.value
-                            expected_uid = f"birthday-{name.replace(' ', '-').lower()}"
+                            expected_uid = f"birthday-{birthday_slug(name)}"
                             if uid.startswith(expected_uid):
                                 return event
                 except Exception as e:
@@ -254,7 +254,7 @@ class CalDAVClient:
                                 return event
                             if hasattr(cal.vevent, 'uid'):
                                 uid = cal.vevent.uid.value
-                                expected_uid = f"birthday-{name.replace(' ', '-').lower()}"
+                                expected_uid = f"birthday-{birthday_slug(name)}"
                                 if uid.startswith(expected_uid):
                                     return event
                     except Exception as e:
