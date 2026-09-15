@@ -2,9 +2,10 @@
 CalDAV client for creating birthday events
 """
 
+import calendar
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 import vobject
 import caldav
@@ -18,6 +19,17 @@ BIRTHDAY_UID_RE = re.compile(r'^birthday-(.+)-\d{4}(\d{4})$')
 def birthday_slug(name: str) -> str:
     """Name part of a birthday event UID: birthday-{slug}-{YYYYMMDD}"""
     return name.replace(' ', '-').lower()
+
+
+def is_leap_day(birthday: date) -> bool:
+    return (birthday.month, birthday.day) == (2, 29)
+
+
+def birthday_in_year(birthday: date, year: int) -> date:
+    """Birthday in the given year; 29 February falls on 28 February in common years."""
+    if is_leap_day(birthday) and not calendar.isleap(year):
+        return birthday.replace(year=year, day=28)
+    return birthday.replace(year=year)
 
 class CalDAVClient:
     """Client for creating events in CalDAV server"""
@@ -84,7 +96,7 @@ class CalDAVClient:
             name = contact['name']
             
             # Create event date for this year
-            event_date = birthday.replace(year=year)
+            event_date = birthday_in_year(birthday, year)
             
             # Generate event details from templates
             event_title = self.event_title_template.format(name=name)
@@ -100,7 +112,8 @@ class CalDAVClient:
                     return False
             
             # Create unique UID
-            event_uid = f"birthday-{birthday_slug(name)}-{event_date.strftime('%Y%m%d')}"
+            # Month/day from the contact, so orphan delete still matches a moved 29 February
+            event_uid = f"birthday-{birthday_slug(name)}-{year}{birthday.strftime('%m%d')}"
             
             # Create iCalendar event
             cal = vobject.iCalendar()
@@ -119,7 +132,8 @@ class CalDAVClient:
             event.dtend.params['VALUE'] = 'DATE'
             
             # Add yearly recurrence
-            event.add('rrule').value = 'FREQ=YEARLY'
+            # Plain FREQ=YEARLY would skip 29 February in common years (RFC 5545)
+            event.add('rrule').value = 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1' if is_leap_day(birthday) else 'FREQ=YEARLY'
             
             # Add reminders
             for days_before in self.reminder_days:
@@ -272,7 +286,7 @@ class CalDAVClient:
         """Update an existing birthday event with new templates"""
         try:
             name = contact['name']
-            event_date = contact['birthday'].replace(year=year)
+            event_date = birthday_in_year(contact['birthday'], year)
             
             # Parse existing event
             cal = vobject.readOne(existing_event.data)
