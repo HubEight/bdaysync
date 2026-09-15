@@ -212,6 +212,16 @@ class CalDAVClient:
                 continue
         return deleted
 
+    def _is_event_for(self, vevent, name: str) -> bool:
+        """Exact match only: 'Anna' must not claim the event of 'Anna Maria'."""
+        if hasattr(vevent, 'uid'):
+            match = BIRTHDAY_UID_RE.match(vevent.uid.value)
+            if match:
+                # Our own event: the UID alone decides
+                return match.group(1) == birthday_slug(name)
+        # Event from elsewhere: adopt it only if the title is exactly ours
+        return hasattr(vevent, 'summary') and vevent.summary.value == self.event_title_template.format(name=name)
+
     def _find_existing_event(self, name: str, date) -> Optional:
         """Find existing birthday event for a contact"""
         try:
@@ -236,18 +246,8 @@ class CalDAVClient:
             
             for event in events:
                 try:
-                    cal = vobject.readOne(event.data)
-                    if hasattr(cal.vevent, 'summary'):
-                        summary = cal.vevent.summary.value
-                        # Check if this event is for this person (name appears in summary)
-                        if name in summary and (self.event_category.lower() in summary.lower() or 'birthday' in summary.lower()):
-                            return event
-                        # Also check by UID pattern
-                        if hasattr(cal.vevent, 'uid'):
-                            uid = cal.vevent.uid.value
-                            expected_uid = f"birthday-{birthday_slug(name)}"
-                            if uid.startswith(expected_uid):
-                                return event
+                    if self._is_event_for(vobject.readOne(event.data).vevent, name):
+                        return event
                 except Exception as e:
                     logger.debug(f"Error parsing existing event: {e}")
                     continue
@@ -263,16 +263,8 @@ class CalDAVClient:
                 
                 for event in events:
                     try:
-                        cal = vobject.readOne(event.data)
-                        if hasattr(cal.vevent, 'summary'):
-                            summary = cal.vevent.summary.value
-                            if name in summary and (self.event_category.lower() in summary.lower() or 'birthday' in summary.lower()):
-                                return event
-                            if hasattr(cal.vevent, 'uid'):
-                                uid = cal.vevent.uid.value
-                                expected_uid = f"birthday-{birthday_slug(name)}"
-                                if uid.startswith(expected_uid):
-                                    return event
+                        if self._is_event_for(vobject.readOne(event.data).vevent, name):
+                            return event
                     except Exception as e:
                         logger.debug(f"Error parsing existing event in fallback: {e}")
                         continue
