@@ -11,6 +11,7 @@ import requests
 
 import caldav_client
 import cardav_client
+import config
 import main
 
 logging.disable(logging.CRITICAL)
@@ -127,6 +128,22 @@ class OrphanDelete(unittest.TestCase):
 
 
 class MainSync(unittest.TestCase):
+    def test_orphan_delete_is_off_by_default(self):
+        with mock.patch.dict('os.environ', clear=True):
+            self.assertFalse(config.get_birthday_config()['delete_orphans'])
+
+    def test_orphan_delete_follows_switch(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), \
+                    mock.patch.object(main, 'CardDAVClient') as carddav, \
+                    mock.patch.object(main, 'CalDAVClient') as caldav:
+                carddav.return_value.get_contacts.return_value = [{'name': 'Anna', 'birthday': date(1990, 1, 2)}]
+                carddav.return_value.fetch_complete = True
+                caldav.return_value.delete_orphans_enabled = enabled
+                caldav.return_value.delete_orphans.return_value = 0
+                self.assertTrue(main.main_sync())
+                self.assertEqual(caldav.return_value.delete_orphans.called, enabled)
+
     def test_no_contacts_fails_and_deletes_nothing(self):
         with mock.patch.object(main, 'CardDAVClient') as carddav, \
                 mock.patch.object(main, 'CalDAVClient') as caldav:
