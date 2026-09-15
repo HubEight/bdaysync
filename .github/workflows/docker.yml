@@ -23,6 +23,8 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # No image when the tests fail
+    needs: test
     outputs:
       # First pushed tag, already lowercased and sanitized by metadata-action
       image: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
@@ -87,8 +89,6 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    needs: build-and-push
-    if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout repository
@@ -113,7 +113,7 @@ jobs:
           # Test help output
           python main.py --help
 
-          # Orphan-delete safety tests
+          # Unit tests
           python -m unittest test_sync
 
           # Test config validation (should fail without env vars)
