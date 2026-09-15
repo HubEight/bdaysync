@@ -29,8 +29,6 @@ class CardDAVClient:
         
         # Discover addressbooks
         self.addressbook_urls = []
-        self.vcard_listed = 0
-        self.vcard_fetched_ok = 0
         self.fetch_complete = False
         self._test_auth_and_discover()
     
@@ -138,9 +136,8 @@ class CardDAVClient:
     def get_contacts(self) -> List[Dict]:
         """Fetch all contacts from all discovered addressbooks"""
         all_contacts = []
-        self.vcard_listed = 0
-        self.vcard_fetched_ok = 0
-        self.fetch_complete = False
+        # Cleared by any listing, download or parse failure. Orphan delete relies on it.
+        self.fetch_complete = True
         
         for addressbook_url in self.addressbook_urls:
             logger.info(f"Processing addressbook: {addressbook_url}")
@@ -148,18 +145,12 @@ class CardDAVClient:
             all_contacts.extend(contacts)
             logger.info(f"Found {len(contacts)} contacts with birthdays in this addressbook")
         
-        self.fetch_complete = (
-            self.vcard_listed > 0 and self.vcard_fetched_ok == self.vcard_listed
-        )
-        logger.info(
-            f"CardDAV fetch {self.vcard_fetched_ok}/{self.vcard_listed} vCards "
-            f"(complete={self.fetch_complete})"
-        )
+        logger.info(f"CardDAV fetch complete: {self.fetch_complete}")
         logger.info(f"Total contacts with birthdays across all addressbooks: {len(all_contacts)}")
         return all_contacts
     
     def _http_get_retry(self, url: str, attempts: int = 3):
-        """GET with retries for transient connection errors (e.g. IPv6 unreachable)."""
+        """GET with retries for transient connection errors."""
         last_error = None
         for i in range(1, attempts + 1):
             try:
@@ -191,7 +182,8 @@ class CardDAVClient:
             
             logger.debug(f"Discovering resources in addressbook: {addressbook_url}")
             response = requests.request('PROPFIND', addressbook_url, 
-                                      auth=self.auth, headers=headers, data=propfind_body)
+                                      auth=self.auth, headers=headers, data=propfind_body,
+                                      timeout=30)
             
             logger.debug(f"PROPFIND response status: {response.status_code}")
             
@@ -205,8 +197,6 @@ class CardDAVClient:
                 if not vcard_urls:
                     logger.debug("No vCard URLs found in this addressbook")
                     return contacts
-
-                self.vcard_listed += len(vcard_urls)
                 
                 # Fetch each vCard
                 for i, vcard_url in enumerate(vcard_urls):
@@ -218,7 +208,6 @@ class CardDAVClient:
                         logger.debug(f"vCard response status: {vcard_response.status_code}")
                         
                         if vcard_response.status_code == 200:
-                            self.vcard_fetched_ok += 1
                             logger.debug(f"vCard content preview: {vcard_response.text[:200]}...")
                             contact = self._parse_vcard(vcard_response.text)
                             if contact:
@@ -229,15 +218,19 @@ class CardDAVClient:
                                 logger.debug(f"No birthday found in vCard: {vcard_url}")
                         else:
                             logger.warning(f"Failed to fetch vCard {vcard_url}: {vcard_response.status_code}")
+                            self.fetch_complete = False
                     except Exception as e:
                         logger.warning(f"Error processing vCard {vcard_url}: {e}")
+                        self.fetch_complete = False
                         continue
             else:
                 logger.error(f"Failed to discover resources in {addressbook_url}: {response.status_code}")
                 logger.error(f"Response: {response.text[:500]}")
+                self.fetch_complete = False
             
         except Exception as e:
             logger.error(f"Error fetching contacts from {addressbook_url}: {e}")
+            self.fetch_complete = False
             if logger.getEffectiveLevel() <= logging.DEBUG:
                 import traceback
                 logger.debug(traceback.format_exc())
@@ -247,12 +240,7 @@ class CardDAVClient:
     def _extract_vcard_urls(self, xml_response: str) -> List[str]:
         """Extract vCard URLs from PROPFIND response"""
         dav_namespace = 'DAV:'
-
-        try:
-            root = ElementTree.fromstring(xml_response)
-        except ElementTree.ParseError as error:
-            logger.warning(f"Could not parse vCard discovery XML: {error}")
-            return []
+        root = ElementTree.fromstring(xml_response)
 
         urls = []
         for response in root.findall(f'{{{dav_namespace}}}response'):
@@ -286,13 +274,12 @@ class CardDAVClient:
             return f"{self.server_url.rstrip('/')}/{url.lstrip('/')}"
     
     def _parse_vcard(self, vcard_text: str) -> Optional[Dict]:
-        """Parse individual vCard"""
+        """Parse individual vCard. Returns None without BDAY, raises on unreadable data."""
         try:
             # Clean up the vCard text
             vcard_text = vcard_text.strip()
             if not vcard_text.startswith('BEGIN:VCARD'):
-                logger.debug("Invalid vCard: doesn't start with BEGIN:VCARD")
-                return None
+                raise ValueError("Invalid vCard: doesn't start with BEGIN:VCARD")
             
             vcard = vobject.readOne(vcard_text)
             contact = {}
@@ -337,12 +324,10 @@ class CardDAVClient:
                             month_day = bday_clean[2:]  # Remove --
                             contact['birthday'] = datetime.strptime(f"2000-{month_day}", '%Y-%m-%d').date()
                         else:
-                            logger.warning(f"Unknown birthday format for {contact['name']}: {bday}")
-                            return None
+                            raise ValueError("unknown format")
                             
                     except ValueError as e:
-                        logger.warning(f"Could not parse birthday for {contact['name']}: {bday} - {e}")
-                        return None
+                        raise ValueError(f"Could not parse birthday for {contact['name']}: {bday} - {e}") from e
                         
                 elif hasattr(bday, 'date'):
                     contact['birthday'] = bday.date()
@@ -364,7 +349,6 @@ class CardDAVClient:
                 logger.debug(f"No birthday found for contact: {contact['name']}")
                 return None
             
-        except Exception as e:
-            logger.warning(f"Error parsing vCard: {e}")
+        except Exception:
             logger.debug(f"vCard content: {vcard_text[:500]}...")
-            return None
+            raise
