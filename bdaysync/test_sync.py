@@ -3,6 +3,7 @@ Safety tests for orphan deletion. Run from bdaysync/: python -m unittest test_sy
 """
 
 import logging
+import re
 import unittest
 from datetime import date, datetime
 from unittest import mock
@@ -97,8 +98,20 @@ class FakeCalendar:
     def __init__(self):
         self.stored = []
 
-    def search(self, *args, **kwargs):
-        return []
+    def search(self, xml):
+        """Like a CalDAV time-range query for one day, recurrences included."""
+        day = datetime.strptime(re.search(r'start="(\d{8})T', xml).group(1), '%Y%m%d')
+        return [event for event in self.stored if self._occurs_on(event, day)]
+
+    @staticmethod
+    def _occurs_on(event, day):
+        vevent = vobject.readOne(event.data).vevent
+        if not hasattr(vevent, 'dtstart'):
+            return False
+        rules = vevent.getrruleset()
+        if rules is None:
+            return vevent.dtstart.value == day.date()
+        return bool(rules.between(day, day, inc=True))
 
     def save_event(self, data):
         self.stored.append(FakeEvent(self, data))
@@ -155,6 +168,53 @@ class LeapDayBirthday(unittest.TestCase):
         self.client.create_birthday_event(self.LEA, 2028)
         existing = self.client.calendar.stored[0]
         self.assertTrue(self.client._update_existing_event(existing, self.LEA, 2027, 'New title', 'New description'))
+
+
+class ExistingEventLookup(unittest.TestCase):
+    ANNA_MARIA = {'name': 'Anna Maria', 'birthday': date(1990, 1, 2)}
+    ANNA = {'name': 'Anna', 'birthday': date(1991, 1, 2)}
+    TEMPLATES = ("🎂 {name}'s Birthday", "🎂 {name} (Geburtstag)")
+
+    def setUp(self):
+        self.client = caldav_client.CalDAVClient.__new__(caldav_client.CalDAVClient)
+        self.client.calendar = FakeCalendar()
+        self.client._load_config()
+
+    def summaries(self):
+        return sorted(vobject.readOne(e.data).vevent.summary.value for e in self.client.calendar.stored)
+
+    def test_next_year_finds_existing_event(self):
+        self.client.create_birthday_event(self.ANNA, 2026)
+        self.assertFalse(self.client.create_birthday_event(self.ANNA, 2027))
+        self.assertEqual(len(self.client.calendar.stored), 1)
+
+    def test_name_contained_in_other_name_gets_own_event(self):
+        for template in self.TEMPLATES:
+            with self.subTest(template=template):
+                self.setUp()
+                self.client.event_title_template = template
+                for run in range(2):
+                    for contact in (self.ANNA_MARIA, self.ANNA):
+                        self.client.create_birthday_event(contact, 2026)
+                self.assertEqual(self.client.calendar.uids(),
+                                 ['UID:birthday-anna-20260102', 'UID:birthday-anna-maria-20260102'])
+                self.assertEqual(self.summaries(), sorted(template.format(name=n) for n in ('Anna', 'Anna Maria')))
+
+    def test_adopts_foreign_event_with_same_title(self):
+        title = self.client.event_title_template.format(name='Anna')
+        self.client.calendar.save_event(
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:made-by-hand\r\nDTSTART;VALUE=DATE:20260102\r\n"
+            f"SUMMARY:{title}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+        self.client.create_birthday_event(self.ANNA, 2026)
+        self.assertEqual(self.client.calendar.uids(), ['UID:made-by-hand'])
+
+    def test_ignores_foreign_event_of_other_contact(self):
+        title = self.client.event_title_template.format(name='Anna Maria')
+        self.client.calendar.save_event(
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:made-by-hand\r\nDTSTART;VALUE=DATE:20260102\r\n"
+            f"SUMMARY:{title}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+        self.client.create_birthday_event(self.ANNA, 2026)
+        self.assertEqual(self.client.calendar.uids(), ['UID:birthday-anna-20260102', 'UID:made-by-hand'])
 
 
 class MainSync(unittest.TestCase):
