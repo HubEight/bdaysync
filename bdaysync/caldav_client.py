@@ -63,6 +63,7 @@ class CalDAVClient:
         self.reminder_template = config['reminder_template']
         self.event_category = config['event_category']
         self.update_existing = config['update_existing']
+        self.delete_orphans_enabled = config['delete_orphans']
         
         logger.info("Birthday event configuration:")
         logger.info(f"  Title template: {self.event_title_template}")
@@ -71,6 +72,7 @@ class CalDAVClient:
         logger.info(f"  Reminder message: {self.reminder_template}")
         logger.info(f"  Category: {self.event_category}")
         logger.info(f"  Update existing: {self.update_existing}")
+        logger.info(f"  Delete orphans: {self.delete_orphans_enabled}")
     
     def create_birthday_event(self, contact: Dict, year: int = None) -> bool:
         """Create a birthday event for a contact"""
