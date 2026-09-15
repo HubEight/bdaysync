@@ -4,10 +4,11 @@ Safety tests for orphan deletion. Run from bdaysync/: python -m unittest test_sy
 
 import logging
 import unittest
-from datetime import date
+from datetime import date, datetime
 from unittest import mock
 
 import requests
+import vobject
 
 import caldav_client
 import cardav_client
@@ -88,6 +89,9 @@ class FakeEvent:
     def delete(self):
         self.calendar.stored.remove(self)
 
+    def save(self):
+        pass
+
 
 class FakeCalendar:
     def __init__(self):
@@ -125,6 +129,32 @@ class OrphanDelete(unittest.TestCase):
 
         self.assertEqual(deleted, 2)
         self.assertEqual(self.client.calendar.uids(), ['UID:birthday-anna-muster-20260103', 'UID:unrelated'])
+
+
+class LeapDayBirthday(unittest.TestCase):
+    LEA = {'name': 'Lea', 'birthday': date(1992, 2, 29)}
+
+    def setUp(self):
+        self.client = caldav_client.CalDAVClient.__new__(caldav_client.CalDAVClient)
+        self.client.calendar = FakeCalendar()
+        self.client._load_config()
+
+    def test_recurs_on_last_day_of_february_every_year(self):
+        self.assertTrue(self.client.create_birthday_event(self.LEA, 2026))
+
+        event = vobject.readOne(self.client.calendar.stored[0].data).vevent
+        occurrences = event.getrruleset().between(datetime(2026, 1, 1), datetime(2029, 1, 1), inc=True)
+        self.assertEqual([d.strftime('%Y-%m-%d') for d in occurrences], ['2026-02-28', '2027-02-28', '2028-02-29'])
+
+    def test_is_kept_by_orphan_delete(self):
+        self.client.create_birthday_event(self.LEA, 2026)
+        self.client.delete_orphans([self.LEA])
+        self.assertEqual(self.client.calendar.uids(), ['UID:birthday-lea-20260229'])
+
+    def test_existing_event_can_be_updated(self):
+        self.client.create_birthday_event(self.LEA, 2028)
+        existing = self.client.calendar.stored[0]
+        self.assertTrue(self.client._update_existing_event(existing, self.LEA, 2027, 'New title', 'New description'))
 
 
 class MainSync(unittest.TestCase):
